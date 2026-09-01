@@ -2469,6 +2469,12 @@ The following parameters are available in the `peadm::migrate` plan:
 * [`replica_host`](#-peadm--migrate--replica_host)
 * [`primary_postgresql_host`](#-peadm--migrate--primary_postgresql_host)
 * [`replica_postgresql_host`](#-peadm--migrate--replica_postgresql_host)
+* [`pe_installer_source`](#-peadm--migrate--pe_installer_source)
+* [`pe_conf_data`](#-peadm--migrate--pe_conf_data)
+* [`stagingdir`](#-peadm--migrate--stagingdir)
+* [`uploaddir`](#-peadm--migrate--uploaddir)
+* [`download_mode`](#-peadm--migrate--download_mode)
+* [`dns_alt_names`](#-peadm--migrate--dns_alt_names)
 
 ##### <a name="-peadm--migrate--old_primary_host"></a>`old_primary_host`
 
@@ -2511,6 +2517,69 @@ Default value: `undef`
 Data type: `Optional[Peadm::SingleTargetSpec]`
 
 Optional new replica PostgreSQL server to be added to the cluster
+
+Default value: `undef`
+
+##### <a name="-peadm--migrate--pe_installer_source"></a>`pe_installer_source`
+
+Data type: `Optional[Stdlib::HTTPSUrl]`
+
+The URL to download the Puppet Enterprise installer media from. If not
+specified, PEAdm will attempt to download PE installation media from its
+standard public source. Passed through to peadm::install and, when
+$upgrade_version is given, to peadm::upgrade.
+
+Default value: `undef`
+
+##### <a name="-peadm--migrate--pe_conf_data"></a>`pe_conf_data`
+
+Data type: `Optional[Hash]`
+
+Config data to plant into pe.conf on the new hosts when it is generated.
+Passed through to peadm::install.
+
+Default value: `{}`
+
+##### <a name="-peadm--migrate--stagingdir"></a>`stagingdir`
+
+Data type: `String`
+
+Directory on the Bolt host where the installer tarball will be cached if
+download_mode is 'bolthost'. An already-present tarball at this path is
+reused rather than re-downloaded, which allows fully offline installs.
+
+Default value: `'/tmp'`
+
+##### <a name="-peadm--migrate--uploaddir"></a>`uploaddir`
+
+Data type: `String`
+
+Directory the installer tarball will be uploaded to or expected to be in
+for offline usage.
+
+Default value: `'/tmp'`
+
+##### <a name="-peadm--migrate--download_mode"></a>`download_mode`
+
+Data type: `Peadm::Download_mode`
+
+Whether the new hosts download the installer themselves ('direct'), or the
+Bolt host downloads it once and uploads it over SCP ('bolthost'). Use
+'bolthost' when the new infrastructure hosts have no route to the installer
+source. Defaults to 'direct' to preserve historical peadm::migrate
+behaviour.
+
+Default value: `'direct'`
+
+##### <a name="-peadm--migrate--dns_alt_names"></a>`dns_alt_names`
+
+Data type: `Optional[Array[String]]`
+
+Additional DNS names to place in the new primary's certificate. Passed
+through to peadm::install. peadm::migrate otherwise installs the new
+primary with no alt names at all, regardless of what the old primary
+carried, because the alt names live in pe.conf and pe.conf is not part of
+the migration backup.
 
 Default value: `undef`
 

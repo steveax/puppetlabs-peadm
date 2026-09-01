@@ -12,6 +12,33 @@
 #   Optional new primary PostgreSQL server to be added to the cluster
 # @param replica_postgresql_host
 #   Optional new replica PostgreSQL server to be added to the cluster
+# @param pe_installer_source
+#   The URL to download the Puppet Enterprise installer media from. If not
+#   specified, PEAdm will attempt to download PE installation media from its
+#   standard public source. Passed through to peadm::install and, when
+#   $upgrade_version is given, to peadm::upgrade.
+# @param download_mode
+#   Whether the new hosts download the installer themselves ('direct'), or the
+#   Bolt host downloads it once and uploads it over SCP ('bolthost'). Use
+#   'bolthost' when the new infrastructure hosts have no route to the installer
+#   source. Defaults to 'direct' to preserve historical peadm::migrate
+#   behaviour.
+# @param pe_conf_data
+#   Config data to plant into pe.conf on the new hosts when it is generated.
+#   Passed through to peadm::install.
+# @param stagingdir
+#   Directory on the Bolt host where the installer tarball will be cached if
+#   download_mode is 'bolthost'. An already-present tarball at this path is
+#   reused rather than re-downloaded, which allows fully offline installs.
+# @param uploaddir
+#   Directory the installer tarball will be uploaded to or expected to be in
+#   for offline usage.
+# @param dns_alt_names
+#   Additional DNS names to place in the new primary's certificate. Passed
+#   through to peadm::install. peadm::migrate otherwise installs the new
+#   primary with no alt names at all, regardless of what the old primary
+#   carried, because the alt names live in pe.conf and pe.conf is not part of
+#   the migration backup.
 plan peadm::migrate (
   Peadm::SingleTargetSpec $old_primary_host,
   Peadm::SingleTargetSpec $new_primary_host,
@@ -19,6 +46,12 @@ plan peadm::migrate (
   Optional[Peadm::SingleTargetSpec] $replica_host = undef,
   Optional[Peadm::SingleTargetSpec] $primary_postgresql_host = undef,
   Optional[Peadm::SingleTargetSpec] $replica_postgresql_host = undef,
+  Optional[Stdlib::HTTPSUrl] $pe_installer_source = undef,
+  Optional[Hash] $pe_conf_data = {},
+  String $stagingdir = '/tmp',
+  String $uploaddir = '/tmp',
+  Peadm::Download_mode $download_mode = 'direct',
+  Optional[Array[String]] $dns_alt_names = undef,
 ) {
   # Log parameters for debugging 
   peadm::log_plan_parameters({
@@ -28,6 +61,9 @@ plan peadm::migrate (
     'primary_postgresql_host' => $primary_postgresql_host,
     'replica_postgresql_host' => $replica_postgresql_host,
     'upgrade_version' => $upgrade_version,
+    'pe_installer_source' => $pe_installer_source,
+    'download_mode' => $download_mode,
+    'dns_alt_names' => $dns_alt_names,
   })
 
   # pre-migration checks
@@ -88,7 +124,12 @@ plan peadm::migrate (
       primary_host                => $new_primary_host,
       console_password            => $old_primary_password,
       code_manager_auto_configure => true,
-      download_mode               => 'direct',
+      download_mode               => $download_mode,
+      pe_installer_source         => $pe_installer_source,
+      pe_conf_data                => $pe_conf_data,
+      stagingdir                  => $stagingdir,
+      uploaddir                   => $uploaddir,
+      dns_alt_names               => $dns_alt_names,
       version                     => $old_pe_conf['pe_version'],
   })
 
@@ -165,7 +206,10 @@ plan peadm::migrate (
     run_plan('peadm::upgrade', {
         primary_host                => $new_primary_host,
         version                     => $upgrade_version,
-        download_mode               => 'direct',
+        download_mode               => $download_mode,
+        pe_installer_source         => $pe_installer_source,
+        stagingdir                  => $stagingdir,
+        uploaddir                   => $uploaddir,
         replica_host                => $replica_host,
         primary_postgresql_host     => $primary_postgresql_host,
         replica_postgresql_host     => $replica_postgresql_host,
