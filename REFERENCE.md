@@ -2475,6 +2475,8 @@ The following parameters are available in the `peadm::migrate` plan:
 * [`uploaddir`](#-peadm--migrate--uploaddir)
 * [`download_mode`](#-peadm--migrate--download_mode)
 * [`dns_alt_names`](#-peadm--migrate--dns_alt_names)
+* [`compiler_pool_address`](#-peadm--migrate--compiler_pool_address)
+* [`r10k_known_hosts`](#-peadm--migrate--r10k_known_hosts)
 
 ##### <a name="-peadm--migrate--old_primary_host"></a>`old_primary_host`
 
@@ -2580,6 +2582,28 @@ through to peadm::install. peadm::migrate otherwise installs the new
 primary with no alt names at all, regardless of what the old primary
 carried, because the alt names live in pe.conf and pe.conf is not part of
 the migration backup.
+
+Default value: `undef`
+
+##### <a name="-peadm--migrate--compiler_pool_address"></a>`compiler_pool_address`
+
+Data type: `Optional[String]`
+
+The service address used by agents to connect to compilers, or the Puppet
+service. Typically this is a load balancer. Passed through to peadm::install
+and peadm::upgrade.
+
+Default value: `undef`
+
+##### <a name="-peadm--migrate--r10k_known_hosts"></a>`r10k_known_hosts`
+
+Data type: `Optional[Peadm::Known_hosts]`
+
+Puppet Enterprise 2023.3+ requires host key verification for the
+r10k_remote host when using ssh. You must provide $r10k_known_hosts
+information in the form of an array of hashes with 'name', 'type' and 'key'
+information for hostname, key-type and public key. Passed through to
+peadm::install and peadm::upgrade.
 
 Default value: `undef`
 
