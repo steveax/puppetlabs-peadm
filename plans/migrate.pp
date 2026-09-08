@@ -31,8 +31,7 @@
 #   Whether the new hosts download the installer themselves ('direct'), or the
 #   Bolt host downloads it once and uploads it over SCP ('bolthost'). Use
 #   'bolthost' when the new infrastructure hosts have no route to the installer
-#   source. Defaults to 'direct' to preserve historical peadm::migrate
-#   behaviour.
+#   source. Defaults to 'bolthost'.
 # @param dns_alt_names
 #   Additional DNS names to place in the new primary's certificate. Passed
 #   through to peadm::install. peadm::migrate otherwise installs the new
@@ -60,7 +59,7 @@ plan peadm::migrate (
   Optional[Hash] $pe_conf_data = {},
   String $stagingdir = '/tmp',
   String $uploaddir = '/tmp',
-  Peadm::Download_mode $download_mode = 'direct',
+  Peadm::Download_mode $download_mode = 'bolthost',
   Optional[Array[String]] $dns_alt_names = undef,
   Optional[String] $compiler_pool_address = undef,
   Optional[Peadm::Known_hosts] $r10k_known_hosts = undef,
