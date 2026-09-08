@@ -17,12 +17,6 @@
 #   specified, PEAdm will attempt to download PE installation media from its
 #   standard public source. Passed through to peadm::install and, when
 #   $upgrade_version is given, to peadm::upgrade.
-# @param download_mode
-#   Whether the new hosts download the installer themselves ('direct'), or the
-#   Bolt host downloads it once and uploads it over SCP ('bolthost'). Use
-#   'bolthost' when the new infrastructure hosts have no route to the installer
-#   source. Defaults to 'direct' to preserve historical peadm::migrate
-#   behaviour.
 # @param pe_conf_data
 #   Config data to plant into pe.conf on the new hosts when it is generated.
 #   Passed through to peadm::install.
@@ -33,12 +27,27 @@
 # @param uploaddir
 #   Directory the installer tarball will be uploaded to or expected to be in
 #   for offline usage.
+# @param download_mode
+#   Whether the new hosts download the installer themselves ('direct'), or the
+#   Bolt host downloads it once and uploads it over SCP ('bolthost'). Use
+#   'bolthost' when the new infrastructure hosts have no route to the installer
+#   source. Defaults to 'bolthost'.
 # @param dns_alt_names
 #   Additional DNS names to place in the new primary's certificate. Passed
 #   through to peadm::install. peadm::migrate otherwise installs the new
 #   primary with no alt names at all, regardless of what the old primary
 #   carried, because the alt names live in pe.conf and pe.conf is not part of
 #   the migration backup.
+# @param compiler_pool_address
+#   The service address used by agents to connect to compilers, or the Puppet
+#   service. Typically this is a load balancer. Passed through to peadm::install
+#   and peadm::upgrade.
+# @param r10k_known_hosts
+#   Puppet Enterprise 2023.3+ requires host key verification for the
+#   r10k_remote host when using ssh. You must provide $r10k_known_hosts
+#   information in the form of an array of hashes with 'name', 'type' and 'key'
+#   information for hostname, key-type and public key. Passed through to
+#   peadm::install and peadm::upgrade.
 plan peadm::migrate (
   Peadm::SingleTargetSpec $old_primary_host,
   Peadm::SingleTargetSpec $new_primary_host,
@@ -50,8 +59,10 @@ plan peadm::migrate (
   Optional[Hash] $pe_conf_data = {},
   String $stagingdir = '/tmp',
   String $uploaddir = '/tmp',
-  Peadm::Download_mode $download_mode = 'direct',
+  Peadm::Download_mode $download_mode = 'bolthost',
   Optional[Array[String]] $dns_alt_names = undef,
+  Optional[String] $compiler_pool_address = undef,
+  Optional[Peadm::Known_hosts] $r10k_known_hosts = undef,
 ) {
   # Log parameters for debugging 
   peadm::log_plan_parameters({
@@ -64,6 +75,8 @@ plan peadm::migrate (
     'pe_installer_source' => $pe_installer_source,
     'download_mode' => $download_mode,
     'dns_alt_names' => $dns_alt_names,
+    'compiler_pool_address' => $compiler_pool_address,
+    'r10k_known_hosts' => $r10k_known_hosts,
   })
 
   # pre-migration checks
@@ -130,6 +143,8 @@ plan peadm::migrate (
       stagingdir                  => $stagingdir,
       uploaddir                   => $uploaddir,
       dns_alt_names               => $dns_alt_names,
+      compiler_pool_address       => $compiler_pool_address,
+      r10k_known_hosts            => $r10k_known_hosts,
       version                     => $old_pe_conf['pe_version'],
   })
 
@@ -213,6 +228,8 @@ plan peadm::migrate (
         replica_host                => $replica_host,
         primary_postgresql_host     => $primary_postgresql_host,
         replica_postgresql_host     => $replica_postgresql_host,
+        compiler_pool_address       => $compiler_pool_address,
+        r10k_known_hosts            => $r10k_known_hosts,
     })
   }
 }
