@@ -48,6 +48,17 @@
 #   information in the form of an array of hashes with 'name', 'type' and 'key'
 #   information for hostname, key-type and public key. Passed through to
 #   peadm::install and peadm::upgrade.
+# @param begin_at_step
+#   The step where the plan should start. If not set, it will start at the
+#   beginning. Used to resume a previously failed migration without
+#   re-running steps that already completed successfully. If set to anything
+#   other than 'backup', $existing_backup_path must also be supplied, since
+#   the 'backup' step (which produces the uploaded backup tarball path) will
+#   be skipped.
+# @param existing_backup_path
+#   The path, on $new_primary_host, of a backup tarball previously uploaded
+#   by an earlier run of this plan. Required when $begin_at_step is set to
+#   anything other than 'backup'.
 plan peadm::migrate (
   Peadm::SingleTargetSpec $old_primary_host,
   Peadm::SingleTargetSpec $new_primary_host,
@@ -63,6 +74,8 @@ plan peadm::migrate (
   Optional[Array[String]] $dns_alt_names = undef,
   Optional[String] $compiler_pool_address = undef,
   Optional[Peadm::Known_hosts] $r10k_known_hosts = undef,
+  Optional[Peadm::MigrateSteps] $begin_at_step = undef,
+  Optional[String] $existing_backup_path = undef,
 ) {
   # Log parameters for debugging 
   peadm::log_plan_parameters({
@@ -77,7 +90,13 @@ plan peadm::migrate (
     'dns_alt_names' => $dns_alt_names,
     'compiler_pool_address' => $compiler_pool_address,
     'r10k_known_hosts' => $r10k_known_hosts,
+    'begin_at_step' => $begin_at_step,
+    'existing_backup_path' => $existing_backup_path,
   })
+
+  if $begin_at_step and $begin_at_step != 'backup' and $existing_backup_path == undef {
+    fail_plan("begin_at_step '${begin_at_step}' requires the 'existing_backup_path' parameter, because the 'backup' step (which produces the uploaded backup tarball path) will be skipped. Supply the remote path to the previously-uploaded backup tarball on ${new_primary_host}.")
+  }
 
   # pre-migration checks
   peadm::assert_supported_bolt_version()
@@ -117,44 +136,61 @@ plan peadm::migrate (
   out::message("Old primary platform: ${old_primary_platform}")
   out::message("New primary platform: ${new_primary_platform}")
 
-  $backup_file = run_plan('peadm::backup', $old_primary_host, {
-      backup_type => 'migration',
-  })
-
-  $download_results = download_file($backup_file['path'], 'backup', $old_primary_host)
-  $download_path = $download_results[0]['path']
-
-  $backup_filename = basename($backup_file['path'])
-  $remote_backup_path = "/tmp/${backup_filename}"
-
-  upload_file($download_path, $remote_backup_path, $new_primary_host)
-
+  # Read-only lookups against the old primary. Cheap and idempotent, so these
+  # always run, regardless of $begin_at_step, so that every later step has the
+  # data it needs even when earlier steps are skipped.
   $old_primary_target = get_targets($old_primary_host)[0]
   $old_primary_password = peadm::get_pe_conf($old_primary_target)['console_admin_password']
   $old_pe_conf = run_task('peadm::get_peadm_config', $old_primary_target).first.value
 
-  run_plan('peadm::install', {
-      primary_host                => $new_primary_host,
-      console_password            => $old_primary_password,
-      code_manager_auto_configure => true,
-      download_mode               => $download_mode,
-      pe_installer_source         => $pe_installer_source,
-      pe_conf_data                => $pe_conf_data,
-      stagingdir                  => $stagingdir,
-      uploaddir                   => $uploaddir,
-      dns_alt_names               => $dns_alt_names,
-      compiler_pool_address       => $compiler_pool_address,
-      r10k_known_hosts            => $r10k_known_hosts,
-      version                     => $old_pe_conf['pe_version'],
-  })
+  $remote_backup_path = $existing_backup_path ? {
+    Undef   => peadm::plan_step('backup') || {
+      $backup_file = run_plan('peadm::backup', $old_primary_host, {
+          backup_type => 'migration',
+      })
 
-  run_plan('peadm::restore', {
-      targets          => $new_primary_host,
-      restore_type     => 'migration',
-      input_file       => $remote_backup_path,
-      console_password => $old_primary_password,
-  })
+      $download_results = download_file($backup_file['path'], 'backup', $old_primary_host)
+      $download_path = $download_results[0]['path']
 
+      $backup_filename = basename($backup_file['path'])
+      $_remote_backup_path = "/tmp/${backup_filename}"
+
+      upload_file($download_path, $_remote_backup_path, $new_primary_host)
+
+      $_remote_backup_path
+    },
+    default => $existing_backup_path,
+  }
+
+  out::message("Using backup tarball at ${remote_backup_path} on ${new_primary_host}")
+
+  peadm::plan_step('install') || {
+    run_plan('peadm::install', {
+        primary_host                => $new_primary_host,
+        console_password            => $old_primary_password,
+        code_manager_auto_configure => true,
+        download_mode               => $download_mode,
+        pe_installer_source         => $pe_installer_source,
+        pe_conf_data                => $pe_conf_data,
+        stagingdir                  => $stagingdir,
+        uploaddir                   => $uploaddir,
+        dns_alt_names               => $dns_alt_names,
+        compiler_pool_address       => $compiler_pool_address,
+        r10k_known_hosts            => $r10k_known_hosts,
+        version                     => $old_pe_conf['pe_version'],
+    })
+  }
+
+  peadm::plan_step('restore') || {
+    run_plan('peadm::restore', {
+        targets          => $new_primary_host,
+        restore_type     => 'migration',
+        input_file       => $remote_backup_path,
+        console_password => $old_primary_password,
+    })
+  }
+
+  # Computed unconditionally: cheap, and needed by the purge-old-nodes step.
   $node_types = {
     'primary_host'             => $old_pe_conf['params']['primary_host'],
     'replica_host'             => $old_pe_conf['params']['replica_host'],
@@ -178,58 +214,68 @@ plan peadm::migrate (
     }
   }
 
-  out::message("Nodes to purge: ${nodes_to_purge}")
+  peadm::plan_step('purge-old-nodes') || {
+    out::message("Nodes to purge: ${nodes_to_purge}")
 
-  if !empty($nodes_to_purge) {
-    out::message('Purging nodes from old configuration individually')
-    $nodes_to_purge.each |$node| {
-      out::message("Purging node: ${node}")
-      run_command("/opt/puppetlabs/bin/puppet node purge ${node}", $new_primary_host)
+    if !empty($nodes_to_purge) {
+      out::message('Purging nodes from old configuration individually')
+      $nodes_to_purge.each |$node| {
+        out::message("Purging node: ${node}")
+        run_command("/opt/puppetlabs/bin/puppet node purge ${node}", $new_primary_host)
+      }
+    } else {
+      out::message('No nodes to purge from old configuration')
     }
-  } else {
-    out::message('No nodes to purge from old configuration')
   }
 
-  # provision a postgresql host if one is provided
-  if $primary_postgresql_host {
-    run_plan('peadm::add_database', targets => $primary_postgresql_host,
-      primary_host => $new_primary_host,
-      is_migration => true,
-    )
-    # provision a replica postgresql host if one is provided
-    if $replica_postgresql_host {
-      run_plan('peadm::add_database', targets => $replica_postgresql_host,
+  peadm::plan_step('add-database') || {
+    # provision a postgresql host if one is provided
+    if $primary_postgresql_host {
+      run_plan('peadm::add_database', targets => $primary_postgresql_host,
         primary_host => $new_primary_host,
         is_migration => true,
       )
+      # provision a replica postgresql host if one is provided
+      if $replica_postgresql_host {
+        run_plan('peadm::add_database', targets => $replica_postgresql_host,
+          primary_host => $new_primary_host,
+          is_migration => true,
+        )
+      }
     }
   }
 
-  # provision a replica if one is provided
-  if $replica_host {
-    run_plan('peadm::add_replica', {
-        primary_host => $new_primary_host,
-        replica_host => $replica_host,
-        replica_postgresql_host => $replica_postgresql_host,
-    })
+  peadm::plan_step('add-replica') || {
+    # provision a replica if one is provided
+    if $replica_host {
+      run_plan('peadm::add_replica', {
+          primary_host => $new_primary_host,
+          replica_host => $replica_host,
+          replica_postgresql_host => $replica_postgresql_host,
+      })
+    }
   }
 
-  # ensure puppet agent enabled on the hosts we migrated to
-  run_command('puppet agent --enable', $new_hosts)
+  peadm::plan_step('enable-agent') || {
+    # ensure puppet agent enabled on the hosts we migrated to
+    run_command('puppet agent --enable', $new_hosts)
+  }
 
-  if $upgrade_version and $upgrade_version != '' and !empty($upgrade_version) {
-    run_plan('peadm::upgrade', {
-        primary_host                => $new_primary_host,
-        version                     => $upgrade_version,
-        download_mode               => $download_mode,
-        pe_installer_source         => $pe_installer_source,
-        stagingdir                  => $stagingdir,
-        uploaddir                   => $uploaddir,
-        replica_host                => $replica_host,
-        primary_postgresql_host     => $primary_postgresql_host,
-        replica_postgresql_host     => $replica_postgresql_host,
-        compiler_pool_address       => $compiler_pool_address,
-        r10k_known_hosts            => $r10k_known_hosts,
-    })
+  peadm::plan_step('upgrade') || {
+    if $upgrade_version and $upgrade_version != '' and !empty($upgrade_version) {
+      run_plan('peadm::upgrade', {
+          primary_host                => $new_primary_host,
+          version                     => $upgrade_version,
+          download_mode               => $download_mode,
+          pe_installer_source         => $pe_installer_source,
+          stagingdir                  => $stagingdir,
+          uploaddir                   => $uploaddir,
+          replica_host                => $replica_host,
+          primary_postgresql_host     => $primary_postgresql_host,
+          replica_postgresql_host     => $replica_postgresql_host,
+          compiler_pool_address       => $compiler_pool_address,
+          r10k_known_hosts            => $r10k_known_hosts,
+      })
+    }
   }
 }
